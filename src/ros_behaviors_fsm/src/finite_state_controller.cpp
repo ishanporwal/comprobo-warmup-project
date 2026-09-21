@@ -45,6 +45,8 @@ public:
                     std::placeholders::_1
                 )
             );
+
+        RCLCPP_INFO(this->get_logger(), "Finite state controller started");
     }
 
 private:
@@ -58,6 +60,11 @@ private:
             msg->right_side
         ) {
             bump_detected_state_ = true;
+
+            RCLCPP_INFO(
+                this->get_logger(),
+                "Bump detected"
+            );
         }
     }
 
@@ -67,13 +74,33 @@ private:
         if (msg->ranges.empty()) {
             return;
         }
-        double distance_front = msg->ranges[0];
-        if (distance_front > 0.1 && distance_front < 0.3) {
-            obstacle_detected_state_ = true;
+        int samples_each_side = 30;
+        int num_ranges = static_cast<int>(msg->ranges.size());
+
+        double closest = msg->range_max;
+
+        for (int i = 0; i < samples_each_side; ++i) {
+            double first = msg->ranges[i];
+            double last = msg->ranges[num_ranges - 1 - i];
+
+            if (first < closest) {
+                closest = first;
+            }
+
+            if (last < closest) {
+                closest = last;
+            }
         }
-        else {
-            obstacle_detected_state_ = false;
-        }
+        obstacle_detected_state_ =
+            closest > 0.3 && closest < 0.5;
+
+        RCLCPP_INFO_THROTTLE(
+            this->get_logger(),
+            *this->get_clock(),
+            1000,
+            "Closest front range: %.3f",
+            closest
+        );
     }
 
     void move_forward() {
@@ -98,20 +125,35 @@ private:
     }
 
     void run_loop() {
-        if (bump_detected_state_) {
+        if (bump_detected_state_ && neato_state_ != "stop") {
+            RCLCPP_INFO(
+                this->get_logger(),
+                "State: %s -> stop",
+                neato_state_.c_str()
+            );
+
             neato_state_ = "stop";
         }
         if (neato_state_ == "move_forward") {
             move_forward();
 
             if (obstacle_detected_state_) {
+                RCLCPP_INFO(
+                    this->get_logger(),
+                    "State: move_forward -> rotate"
+                );
+
                 neato_state_ = "rotate";
             }
         }
         else if (neato_state_ == "rotate") {
             rotate();
-
             if (!obstacle_detected_state_) {
+                RCLCPP_INFO(
+                    this->get_logger(),
+                    "State: rotate -> move_forward"
+                );
+
                 neato_state_ = "move_forward";
             }
         }
